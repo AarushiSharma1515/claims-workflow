@@ -1,0 +1,3 @@
+# Runtime dependencies. boto3 is preinstalled in the Lambda runtime,
+# so it is only needed here for local development and tests.
+boto3>=1.34
