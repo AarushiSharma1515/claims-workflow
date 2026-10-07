@@ -1,6 +1,6 @@
 # Reimbursement Claims Workflow Automation
 
-A serverless system on AWS that validates reimbursement claims automatically,
+Is being built as a serverless system on AWS that validates reimbursement claims automatically,
 enforces an approval lifecycle, and shows where claims get stuck.
 
 > **Status:** Stage 1 of 6 complete (state machine + validation, fully tested).
