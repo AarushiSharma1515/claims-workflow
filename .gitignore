@@ -11,3 +11,4 @@ samconfig.toml
 .DS_Store
 .idea/
 .vscode/
+.aws-sam/

@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Reimbursement claims workflow - CSV ingest (Stage 3)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 256
+
+Resources:
+  # --- Data ---------------------------------------------------------------
+  ClaimsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: claim_id, AttributeType: S }
+        - { AttributeName: status, AttributeType: S }
+        - { AttributeName: status_updated_at, AttributeType: S }
+      KeySchema:
+        - { AttributeName: claim_id, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - { AttributeName: status, KeyType: HASH }
+            - { AttributeName: status_updated_at, KeyType: RANGE }
+          Projection:
+            ProjectionType: ALL
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-uploads-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # --- Failure handling ---------------------------------------------------
+  IngestDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600   # keep failed events for 14 days
+
+  # --- Compute ------------------------------------------------------------
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ingest"
+      RetentionInDays: 7
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ingest"
+      CodeUri: src/
+      Handler: claims.ingest_handler.lambda_handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ClaimsTable
+          TIMEZONE: Asia/Kolkata
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt IngestDeadLetterQueue.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ClaimsTable
+        # Built from a fixed name (not !Ref) to avoid a circular dependency
+        # between the bucket's notification and this function's role.
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${AWS::StackName}-uploads-${AWS::AccountId}/*"
+      Events:
+        CsvUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref UploadBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - { Name: suffix, Value: .csv }
+
+Outputs:
+  UploadBucketName:
+    Value: !Ref UploadBucket
+  ClaimsTableName:
+    Value: !Ref ClaimsTable
+  DeadLetterQueueUrl:
+    Value: !Ref IngestDeadLetterQueue
