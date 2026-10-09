@@ -1,5 +1,9 @@
 import csv
+import random
+import time
 from dataclasses import dataclass
+from botocore.exceptions import ClientError
+
 REQUIRED_COLUMNS = ("claim_id" , "claimant" , "category" , "amount" , "bill_id" , "date")
 
 class MalformedCsvError(Exception):
@@ -54,10 +58,23 @@ def parse_csv(text: str) -> list[CsvRow]:
         rows.append(CsvRow(len(rows) + 1, data, problem))
     return rows
 
+THROTTLE_CODES = frozenset({
+    "ThrottlingException",
+    "ProvisionedThroughputExceededException",
+    "RequestLimitExceeded",
+})
 
 def retry_on_throttle(func, *, attempts=5, base_delay=0.1, sleep=None):
-    raise NotImplementedError
-
+    """Call func(); retry with exponential backoff + jitter only on throttling."""
+    sleep = sleep or time.sleep
+    for attempt in range(attempts):
+        try:
+            return func()
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code not in THROTTLE_CODES or attempt == attempts - 1:
+                raise
+            sleep(base_delay * 2**attempt + random.uniform(0, base_delay))
 
 def process_rows(rows, repo, *, category_limits, today, now, source,
                  max_workers=4, attempts=5, sleep=None):
